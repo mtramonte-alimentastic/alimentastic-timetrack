@@ -3,6 +3,7 @@ import ExcelJS from 'exceljs';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function pad(n) { return String(n).padStart(2, '0'); }
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function r1(n) { return Math.round(n * 10) / 10; }
 function colLetter(n) {
   let s = '';
@@ -57,17 +58,17 @@ const COLS = [
   { header: 'Difference to BMD', width: 16 }
 ];
 
-function addAboutSheet(wb) {
+function addAboutSheet(wb, team) {
   const ws = wb.addWorksheet('About');
   ws.getColumn(1).width = 22;
   ws.getColumn(2).width = 90;
-  const title = ws.addRow(['Brand Time', 'Marketing hours report \u2014 Alimentastic GmbH']);
+  const title = ws.addRow(['Brand Time', `${team} hours report \u2014 Alimentastic GmbH`]);
   title.getCell(1).font = TITLE_FONT;
   title.getCell(2).font = BOLD_FONT;
   ws.addRow([]);
   const rows = [
-    ['Purpose', 'Allocation of employee hours to brands, so REPLOID-facing work can be measured against its share of the marketing retainer.'],
-    ['Who', 'Every member of the marketing team, logged individually.'],
+    ['Purpose', 'Allocation of employee hours to brands, so REPLOID-facing work can be measured against its share of the retainer.'],
+    ['Who', `Every member of the ${team} team, logged individually.`],
     ['Granularity', 'One row per employee, day and brand/project.'],
     ['Unassignable hours', 'Recorded under Team & planning, Admin & reporting, Recruiting & onboarding or Learning & development rather than a brand.'],
     ['BMD reconciliation', 'Each employee also enters the day\u2019s total hours as logged in BMD (the \u201cBMD Hours (Day)\u201d column). The Difference column should read 0.'],
@@ -86,13 +87,13 @@ function addAboutSheet(wb) {
 /* One sheet per week. Returns metadata (+cached brand totals) so the
    Evaluation sheet can both reference these cells by formula and show a
    correct number immediately, without depending on the viewer recalculating. */
-function addWeekSheet(wb, cfg, weekStr, rowsForWeek) {
+function addWeekSheet(wb, cfg, weekStr, rowsForWeek, team) {
   const name = weekLabel(weekStr).slice(0, 31);
   const ws = wb.addWorksheet(name);
   COLS.forEach((c, i) => { ws.getColumn(i + 1).width = c.width; });
 
   ws.mergeCells(1, 1, 1, 9);
-  ws.getCell(1, 1).value = `Marketing \u2014 ${weekLabel(weekStr)} \u2014 ${weekRangeLabel(weekStr)}`;
+  ws.getCell(1, 1).value = `${team} \u2014 ${weekLabel(weekStr)} \u2014 ${weekRangeLabel(weekStr)}`;
   ws.getCell(1, 1).font = TITLE_FONT;
   ws.mergeCells(2, 1, 2, 9);
   ws.getCell(2, 1).value = 'Generated automatically by Brand Time \u2014 not a form to fill in.';
@@ -237,12 +238,12 @@ function addEvaluationSheet(wb, cfg, weekMeta) {
 
 /* Builds one workbook covering a single week — About + that week's sheet +
    an Evaluation sheet — for the automatic completion email. */
-export async function buildWeekWorkbook(cfg, week, rows) {
+export async function buildWeekWorkbook(cfg, week, rows, team = 'Team') {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Brand Time';
   wb.created = new Date();
-  addAboutSheet(wb);
-  const wm = addWeekSheet(wb, cfg, week, rows);
+  addAboutSheet(wb, team);
+  const wm = addWeekSheet(wb, cfg, week, rows, team);
   addEvaluationSheet(wb, cfg, [wm]);
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
@@ -252,7 +253,7 @@ export async function buildWeekWorkbook(cfg, week, rows) {
    RESEND_FROM defaults to Resend's shared sandbox sender, which only
    delivers to the address you signed up to Resend with — set a verified
    domain sender for anything else. */
-export async function sendWeekEmail({ to, week, buffer, complete, total }) {
+export async function sendWeekEmail({ to, week, buffer, complete, total, team = 'Team' }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) throw new Error('RESEND_API_KEY is not set.');
   const from = process.env.RESEND_FROM || 'Brand Time <onboarding@resend.dev>';
@@ -262,11 +263,11 @@ export async function sendWeekEmail({ to, week, buffer, complete, total }) {
     headers: { Authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify({
       from, to: Array.isArray(to) ? to : [to],
-      subject: `Brand Time \u2014 week ${week} complete (${complete}/${total})`,
-      html: `<p>Everyone on the team has submitted week <b>${week}</b>.</p>
+      subject: `Brand Time \u2014 ${team} \u2014 week ${week} complete (${complete}/${total})`,
+      html: `<p>Everyone in <b>${esc(team)}</b> has submitted week <b>${week}</b>.</p>
              <p>The attached workbook has an About sheet, that week's detail, and an Evaluation sheet summing hours per brand.</p>`,
       attachments: [{
-        filename: `brand-time_${week}.xlsx`,
+        filename: `brand-time_${String(team).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'team'}_${week}.xlsx`,
         content: buffer.toString('base64')
       }]
     })

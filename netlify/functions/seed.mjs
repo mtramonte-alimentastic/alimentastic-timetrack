@@ -43,3 +43,8 @@ export const SEED_CONFIG = {
     'Trade shows & events', 'Meetings', 'Admin'
   ]
 };
+
+/* Teams people can choose at signup. Editable by admins in the Brands tab; this list is only the
+   starting point (and the fallback if none has been saved). Matches the departments used in the
+   company hours report. */
+export const DEFAULT_TEAMS = ['Marketing', 'Sales FMCG', 'Sales PETFOOD', 'Operations', 'Product Development', 'Management'];

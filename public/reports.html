@@ -293,8 +293,7 @@ textarea.copybuf{position:fixed;left:-9999px;top:0}
 <script>
 "use strict";
 const DAY = 864e5;
-const DEPT = 'Marketing';
-const DEPTS = [DEPT];
+const NO_TEAM = 'No team';
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 /* ---------- helpers ---------- */
@@ -357,7 +356,7 @@ function prettyEmail(e) {
 /* ---------- state ---------- */
 const defaultSettings = () => ({method: 'none', rates: {}, brands: {}, hideNames: true, autoAssign: true, includeDrafts: false, startWeek: null});
 const S = {
-  ready: false, error: '', cfg: {brands: [], tasks: []}, roster: [], weeksRaw: [], me: {email: ''},
+  ready: false, error: '', cfg: {brands: [], tasks: []}, roster: [], weeksRaw: [], me: {email: ''}, teams: [], profileTeam: {},
   settings: defaultSettings(), excuses: {}, acks: {}, people: {},
   tab: 'overview', mode: 'week', period: null, brandSel: null, q: '',
   open: {Reploid: true, Diverse: false, aus: false},
@@ -385,6 +384,8 @@ async function loadData() {
   const j = await r.json();
   S.cfg = j.config || {brands: [], tasks: []}; S.cfg.brands = S.cfg.brands || [];
   S.roster = j.roster || []; S.weeksRaw = j.weeks || []; S.me = j.me || {email: ''};
+  S.teams = j.teams || []; S.profileTeam = {};
+  for (const p of (j.profiles || [])) if (p.email) S.profileTeam[String(p.email).toLowerCase()] = p.team || '';
   const st = j.state || {};
   S.settings = Object.assign(defaultSettings(), st.settings || {});
   S.settings.rates = S.settings.rates || {}; S.settings.brands = S.settings.brands || {};
@@ -435,6 +436,9 @@ function groupName(G) {
 }
 
 /* ---------- rows ---------- */
+/* A person's department is their team: an admin's override (Settings -> People) wins over what they chose themselves. */
+const deptOf = email => { const k = String(email).toLowerCase(); return str((S.people[k] || {}).team) || S.profileTeam[k] || NO_TEAM; };
+const deptRank = d => { const i = S.teams.indexOf(d); return i < 0 ? 99 : i; };
 const personName = email => str((S.people[String(email).toLowerCase()] || {}).name) || prettyEmail(email);
 function buildRaw() {
   const rows = [], days = [];
@@ -442,13 +446,13 @@ function buildRaw() {
   for (const rec of S.weeksRaw) {
     const doc = rec.doc; if (!doc) continue;
     if (!(doc.submitted || S.settings.includeDrafts)) continue;
-    const week = rec.week, email = String(rec.email || '(unknown)').toLowerCase(), person = personName(email);
+    const week = rec.week, email = String(rec.email || '(unknown)').toLowerCase(), person = personName(email), dept = deptOf(email);
     for (const iso of Object.keys(doc.days || {}).sort()) {
       const d = doc.days[iso] || {}; const worked = typeof d.worked === 'number' ? d.worked : null; const rs = d.rows || [];
-      days.push({week, email, person, iso, worked, n: rs.length, hours: sum(rs.map(x => +x.h || 0))});
+      days.push({week, email, person, dept, iso, worked, n: rs.length, hours: sum(rs.map(x => +x.h || 0))});
       for (const x of rs) {
         const b = byId.get(x.b);
-        rows.push({week, kw: kwOf(week), dept: DEPT, email, emp: email, person, iso, date: new Date(iso + 'T00:00:00Z'), month: iso.slice(0, 7),
+        rows.push({week, kw: kwOf(week), dept, email, emp: email, person, iso, date: new Date(iso + 'T00:00:00Z'), month: iso.slice(0, 7),
           brandRaw: b ? b.name : str(x.b), brandId: x.b, hours: +x.h || 0, topic: str(x.t), note: str(x.n), bmd: worked});
       }
     }
@@ -532,7 +536,13 @@ function inPeriod(r, mode = S.mode, p = S.period) {
   return true;
 }
 const periodRows = (mode, p) => ROWS.filter(r => counts(r) && inPeriod(r, mode, p));
-const deptsAll = () => DEPTS;
+/* Teams in their configured order, then any other department that shows up in the data (e.g. "No team"). */
+function deptsAll() {
+  const out = S.teams.slice();
+  for (const r of ROWS) if (r.dept && !out.includes(r.dept)) out.push(r.dept);
+  for (const e of S.roster) { const d = deptOf(e); if (!out.includes(d)) out.push(d); }
+  return out;
+}
 function weeksIn(mode, p, rows) {
   if (mode === 'week') return 1;
   if (mode === 'month') return workdays(p) / 5;
@@ -605,8 +615,8 @@ let DOCMAP = new Map();
 const docHours = doc => sum(Object.values((doc && doc.days) || {}).flatMap(d => (d.rows || []).map(r => +r.h || 0)));
 const startWk = () => (S.settings.startWeek && WEEKS.includes(S.settings.startWeek)) ? S.settings.startWeek : WEEKS[0];
 function peopleList() {
-  return S.roster.map(email => { const p = S.people[email] || {}; return {id: email, email, name: personName(email), dept: DEPT, required: p.required !== false, from: p.from || '', to: p.to || ''}; })
-    .sort((a, b) => a.name.localeCompare(b.name));
+  return S.roster.map(email => { const p = S.people[email] || {}; return {id: email, email, name: personName(email), dept: deptOf(email), required: p.required !== false, from: p.from || '', to: p.to || ''}; })
+    .sort((a, b) => deptRank(a.dept) - deptRank(b.dept) || a.dept.localeCompare(b.dept) || a.name.localeCompare(b.name));
 }
 function empStatus(e, wk) {
   const ws = mondayOf(wk), we = new Date(ws.getTime() + 6 * DAY); const iso = d => d.toISOString().slice(0, 10);
@@ -704,7 +714,7 @@ function findIssues(rows = ROWS) {
   // Days with hours worked but nothing assigned to a brand
   for (const d of DAYS) {
     if (d.n === 0 && d.worked > 0 && dueStatus(d.week) !== 'open') {
-      add('crit', {dept: DEPT, week: d.week, kw: kwOf(d.week), iso: d.iso, person: d.person, email: d.email}, 'Hours worked but nothing assigned', `${fmtH(d.worked)} worked on this day, none assigned to a brand.`);
+      add('crit', {dept: d.dept, week: d.week, kw: kwOf(d.week), iso: d.iso, person: d.person, email: d.email}, 'Hours worked but nothing assigned', `${fmtH(d.worked)} worked on this day, none assigned to a brand.`);
     }
   }
   const perDay = new Map();
@@ -736,17 +746,24 @@ const SEV = {crit: 'Error', warn: 'Check', info: 'Note'};
 const pill = (sev, text) => `<span class="pill ${sev}">${ICON[sev] || ''}${esc(text || SEV[sev])}</span>`;
 
 function renderFiles() {
-  const list = peopleList().filter(e => e.required);
-  const subs = S.weeksRaw.filter(w => w.doc && w.doc.submitted && w.doc.submittedAt).sort((a, b) => String(a.doc.submittedAt).localeCompare(String(b.doc.submittedAt)));
-  const lastSub = subs[subs.length - 1];
-  const who = lastSub ? `Last: ${esc(personName(lastSub.email))}, ${esc(fmtTime(lastSub.doc.submittedAt))}` : 'Nothing submitted yet';
-  const due = lastDueWeek(); let stat = '';
-  if (due) {
-    const sts = list.map(e => empStatus(e, due)).filter(s => s.s !== 'inactive');
-    const miss = sts.filter(s => s.s === 'late').length, today = sts.filter(s => s.s === 'due').length, lateOk = sts.filter(s => s.s === 'ok' && s.late).length;
-    if (sts.length) stat = miss ? pill('crit', `Week ${kwOf(due)} missing · ${miss} of ${sts.length}`) : today ? pill('warn', `Week ${kwOf(due)} due today`) : lateOk ? pill('warn', `Week ${kwOf(due)} reported, partly late`) : pill('ok', `Week ${kwOf(due)} reported`);
-  }
-  document.getElementById('files').innerHTML = `<div class="section-head" style="margin-bottom:10px"><h3>Latest submissions by department</h3></div><div class="files"><div class="file${lastSub ? ' on' : ''}"><span class="dept"><span class="dot"></span>${esc(DEPT)}</span><span class="who">${who}</span>${stat ? `<span class="st">${stat}</span>` : ''}</div></div>`;
+  const all = peopleList(); const due = lastDueWeek();
+  const cards = deptsAll().map(dept => {
+    const members = all.filter(e => e.dept === dept);
+    const emails = new Set(members.map(e => e.email.toLowerCase()));
+    const subs = S.weeksRaw.filter(w => emails.has(String(w.email || '').toLowerCase()) && w.doc && w.doc.submitted && w.doc.submittedAt)
+      .sort((a, b) => String(a.doc.submittedAt).localeCompare(String(b.doc.submittedAt)));
+    const lastSub = subs[subs.length - 1];
+    if (!members.length && !lastSub) return '';
+    const who = lastSub ? `Last: ${esc(personName(lastSub.email))}, ${esc(fmtTime(lastSub.doc.submittedAt))}` : 'Nothing submitted yet';
+    let stat = '';
+    if (due) {
+      const sts = members.filter(e => e.required).map(e => empStatus(e, due)).filter(s => s.s !== 'inactive');
+      const miss = sts.filter(s => s.s === 'late').length, today = sts.filter(s => s.s === 'due').length, lateOk = sts.filter(s => s.s === 'ok' && s.late).length;
+      if (sts.length) stat = miss ? pill('crit', `Week ${kwOf(due)} missing · ${miss} of ${sts.length}`) : today ? pill('warn', `Week ${kwOf(due)} due today`) : lateOk ? pill('warn', `Week ${kwOf(due)} reported, partly late`) : pill('ok', `Week ${kwOf(due)} reported`);
+    }
+    return `<div class="file${lastSub ? ' on' : ''}"><span class="dept"><span class="dot"></span>${esc(dept)}</span><span class="who">${who}</span>${stat ? `<span class="st">${stat}</span>` : ''}</div>`;
+  }).filter(Boolean).join('') || `<div class="file"><span class="dept"><span class="dot"></span>No teams yet</span><span class="who">Nothing submitted yet</span></div>`;
+  document.getElementById('files').innerHTML = `<div class="section-head" style="margin-bottom:10px"><h3>Latest submissions by department</h3></div><div class="files">${cards}</div>`;
   document.getElementById('banner').innerHTML = '';
   renderMenu();
 }
@@ -1038,8 +1055,9 @@ function empGrid(list, weeks, only) {
     : `<td><button class="cell ${cls}" data-action="cell-menu" data-e="${esc(e.id)}" data-w="${w}" data-tip="${esc(tip)}">${label}</button></td>`;
   const shown = list.filter(e => e.required && (!only || only.has(e.id)));
   if (!shown.length) return `<div class="empty">Nobody has open weeks.</div>`;
-  rows.push(`<tr class="grp"><td colspan="${weeks.length + 1}">${esc(DEPT)}</td></tr>`);
+  let lastDept = null;
   for (const e of shown) {
+    if (e.dept !== lastDept) { rows.push(`<tr class="grp"><td colspan="${weeks.length + 1}">${esc(e.dept || NO_TEAM)}</td></tr>`); lastDept = e.dept; }
     const miss = weeks.filter(w => empStatus(e, w).s === 'late');
     rows.push(`<tr><td><span class="namecell"><span>${esc(e.name)}</span>${miss.length ? remindLinks(e, miss) : ''}</span></td>${weeks.map(w => {
       const st = empStatus(e, w);
@@ -1096,8 +1114,8 @@ function viewCheck() {
 function peopleSettings() {
   const list = peopleList();
   return `<div class="section"><div class="section-head"><h2>People</h2></div>
-    <p class="note">Basis for "who has not submitted". The list comes from the team addresses set up for Brand Time (the allowed emails). Nobody has to submit before their start date or after their leaving date. People who are not required to submit do not appear in the check. Names can be set here for the reports; without a name the email address is shortened (l.talbot becomes L. Talbot).</p>
-    ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Required to submit</th><th>Start date</th><th>Leaving date</th></tr></thead><tbody>${list.map((e, i) => `<tr><td><input type="text" data-pe="${esc(e.email)}" data-f="name" value="${esc((S.people[e.email] || {}).name || '')}" placeholder="${esc(prettyEmail(e.email))}" aria-label="Name" style="width:200px"></td><td class="muted">${esc(e.email)}</td><td><input type="checkbox" data-pe="${esc(e.email)}" data-f="required" ${e.required ? 'checked' : ''} aria-label="Required to submit"></td><td><input type="date" data-pe="${esc(e.email)}" data-f="from" value="${esc(e.from)}" aria-label="Start date"></td><td><input type="date" data-pe="${esc(e.email)}" data-f="to" value="${esc(e.to)}" aria-label="Leaving date"></td></tr>`).join('')}</tbody></table></div>`
+    <p class="note">Basis for "who has not submitted". The list comes from the team addresses set up for Brand Time (the allowed emails). Nobody has to submit before their start date or after their leaving date. People who are not required to submit do not appear in the check. Names can be set here for the reports; without a name the email address is shortened (l.talbot becomes L. Talbot). <b>Team</b> is what each person chose when they signed up; choosing a team here overrides it, and also applies to people who have not signed up yet.</p>
+    ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Team</th><th>Required to submit</th><th>Start date</th><th>Leaving date</th></tr></thead><tbody>${list.map((e, i) => `<tr><td><input type="text" data-pe="${esc(e.email)}" data-f="name" value="${esc((S.people[e.email] || {}).name || '')}" placeholder="${esc(prettyEmail(e.email))}" aria-label="Name" style="width:200px"></td><td class="muted">${esc(e.email)}</td><td><select data-pe="${esc(e.email)}" data-f="team" aria-label="Team"><option value="">${S.profileTeam[e.email.toLowerCase()] ? 'As chosen: ' + esc(S.profileTeam[e.email.toLowerCase()]) : 'Not chosen yet'}</option>${S.teams.map(t => `<option ${((S.people[e.email] || {}).team === t) ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select></td><td><input type="checkbox" data-pe="${esc(e.email)}" data-f="required" ${e.required ? 'checked' : ''} aria-label="Required to submit"></td><td><input type="date" data-pe="${esc(e.email)}" data-f="from" value="${esc(e.from)}" aria-label="Start date"></td><td><input type="date" data-pe="${esc(e.email)}" data-f="to" value="${esc(e.to)}" aria-label="Leaving date"></td></tr>`).join('')}</tbody></table></div>`
       : '<div class="empty">No team addresses are set up yet.</div>'}</div>`;
 }
 function viewSettings() {
@@ -1339,7 +1357,7 @@ document.addEventListener('change', e => {
   if (t.id === 'onlyMissing') { S.onlyMissing = t.checked; render(); return; }
   if (t.dataset.pe != null) {
     const em = t.dataset.pe; const f = t.dataset.f; const cur = Object.assign({}, S.people[em]);
-    if (f === 'required') cur.required = t.checked; else if (f === 'name') { const v = t.value.trim().replace(/\s+/g, ' '); if (v) cur.name = v; else delete cur.name; } else cur[f] = t.value;
+    if (f === 'required') cur.required = t.checked; else if (f === 'name') { const v = t.value.trim().replace(/\s+/g, ' '); if (v) cur.name = v; else delete cur.name; } else if (f === 'team') { if (t.value) cur.team = t.value; else delete cur.team; } else cur[f] = t.value;
     S.people = Object.assign({}, S.people, {[em]: cur}); savePeople(); render(); return;
   }
   if (t.id === 'periodSel') { S.period = t.value; render(); }

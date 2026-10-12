@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Brand Time — Marketing</title>
+<title>Brand Time</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&display=swap" rel="stylesheet">
@@ -211,7 +211,7 @@ tr.total td{border-bottom:0;border-top:2px solid var(--ink);font-weight:700}
 .login p.lede{color:var(--muted);font-size:13.5px;margin:0 0 26px}
 .login label{display:block;font-size:11.5px;font-weight:600;letter-spacing:.08em;
   text-transform:uppercase;color:var(--muted);margin:0 0 5px}
-.login input{width:100%;border:1px solid var(--rule);background:var(--paper);
+.login input,.login select{width:100%;border:1px solid var(--rule);background:var(--paper);
   padding:11px 12px;margin-bottom:14px}
 .login .btn{width:100%;padding:13px}
 .login .swap{background:none;border:0;color:var(--muted);font-size:12.5px;
@@ -251,6 +251,7 @@ var S = {
   team:null, teamWeek:null, people:null,
   dirty:false, saving:false, savedAt:null, error:null,
   closed:false, lostChange:false,
+  needsTeam:false, teams:[], teamOptions:null, teamFilter:"",
   ready:false, authed:false, authMode:"login"
 };
 
@@ -268,7 +269,7 @@ function call(base,op,body){
   return fetch(base+"?op="+op,opts).then(function(r){
     return r.text().then(function(txt){
       var j={}; try{ j=txt?JSON.parse(txt):{}; }catch(e){ j={error:txt.slice(0,160)}; }
-      if(!r.ok){ var err=new Error(j.error||("HTTP "+r.status)); err.status=r.status; throw err; }
+      if(!r.ok){ var err=new Error(j.error||("HTTP "+r.status)); err.status=r.status; err.data=j; throw err; }
       return j;
     });
   });
@@ -394,6 +395,7 @@ function save(){
     setStatus();
   }).catch(function(e){
     S.saving=false; savePending=false;
+    if(e.status===400&&e.data&&e.data.needsTeam){ S.needsTeam=true; S.dirty=false; return render(); }
     if(e.status===409){                    // the week closed while this page was open
       S.lostChange=S.dirty; S.dirty=false; S.closed=true;
       return loadWeek(S.week);
@@ -458,7 +460,7 @@ function renderWeek(){
 
   if(S.closed){
     m.appendChild(el("div",{class:"closedbar",text:
-      "This week is closed — everyone has submitted, so entries can no longer be changed."+
+      "This week is closed — everyone in your team has submitted, so entries can no longer be changed."+
       (S.lostChange?" Your last unsaved change was not saved.":"")}));
   }
 
@@ -490,7 +492,7 @@ function renderWeek(){
     return el("span",{},[el("i",{class:"seg g-"+gr.id}),document.createTextNode(gr.label)]);
   })));
   m.appendChild(el("div",{class:"privacy",
-    text:"Your entries are visible only to you and the head of marketing. Nobody else on the team can open them."}));
+    text:"Your entries are visible only to you and the Brand Time admins. Nobody else on your team can open them."}));
 
   var sub=!!S.doc.submitted;
   var foot=el("div",{class:"foot"},S.closed?[
@@ -677,7 +679,7 @@ function loadTeam(week){
 }
 function renderTeam(){
   var m=el("div",{class:"panel"});
-  m.appendChild(el("h2",{text:"Team week"}));
+  m.appendChild(el("h2",{text:"Week by team"}));
   m.appendChild(el("p",{class:"lede",
     text:"The team figure is the one that matters — individual weeks swing with trade shows and leave."}));
   var wk=S.teamWeek||S.week;
@@ -691,10 +693,22 @@ function renderTeam(){
   if(!S.team.length){ m.appendChild(el("div",{class:"empty",
     text:"Nobody has entered anything yet. People appear here once they save a week."})); return m; }
 
+  var fsel=el("select",{"aria-label":"Team"});
+  [["","All teams"]].concat((S.teams||[]).map(function(t){return [t,t];})).concat([["__none","No team yet"]]).forEach(function(o){
+    fsel.appendChild(el("option",{value:o[0],text:o[1],selected:o[0]===S.teamFilter?"selected":null}));
+  });
+  fsel.addEventListener("change",function(){ S.teamFilter=fsel.value; render(); });
+  m.appendChild(el("div",{class:"field"},[el("label",{text:"Show",style:"font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)"}),fsel]));
+  var shownRows=S.team.filter(function(p){
+    if(!S.teamFilter)return true;
+    return S.teamFilter==="__none"?!p.team:p.team===S.teamFilter;
+  });
+  if(!shownRows.length){ m.appendChild(el("div",{class:"empty",text:"Nobody in this selection has entered anything for this week."})); return m; }
+
   var tot={worked:0,reploid:0,external:0,internal:0};
   var tb=el("tbody");
-  S.team.slice().sort(function(a,b){
-    return (a.email||"").localeCompare(b.email||"");
+  shownRows.slice().sort(function(a,b){
+    return (a.team||"~").localeCompare(b.team||"~")||(a.email||"").localeCompare(b.email||"");
   }).forEach(function(p){
     var t=weekTotals(p.doc), sh=shares(t);
     tot.worked+=t.worked; tot.reploid+=t.reploid; tot.external+=t.external; tot.internal+=t.internal;
@@ -707,6 +721,7 @@ function renderTeam(){
       el("td",{},[ el("div",{text:p.email||"(unknown)"}),
         (!p.doc)?el("div",{class:"miss",text:"nothing entered"}):
         (!p.doc.submitted?el("div",{class:"miss",text:"not submitted"}):null) ]),
+      el("td",{text:p.team||"—",style:p.team?"":"color:var(--muted)"}),
       el("td",{class:"num",text:t.worked?r1(t.worked):"—"}),
       el("td",{class:"num",text:t.reploid?r1(t.reploid):"—"}),
       el("td",{},[ el("div",{style:"text-align:right;font-variant-numeric:tabular-nums",
@@ -715,13 +730,14 @@ function renderTeam(){
   });
   var stot=shares(tot);
   tb.appendChild(el("tr",{class:"total"},[
-    el("td",{text:"Team"}),
+    el("td",{text:S.teamFilter?(S.teamFilter==="__none"?"No team":S.teamFilter):"All teams"}),
+    el("td",{text:""}),
     el("td",{class:"num",text:r1(tot.worked)}),
     el("td",{class:"num",text:r1(tot.reploid)}),
     el("td",{class:"num",text:tot.worked?Math.round(stot.ofWorked)+"%":"—"})
   ]));
   m.appendChild(el("table",{},[el("thead",{},[el("tr",{},[
-    el("th",{text:"Person"}),el("th",{class:"num",text:"Worked"}),
+    el("th",{text:"Person"}),el("th",{text:"Team"}),el("th",{class:"num",text:"Worked"}),
     el("th",{class:"num",text:"REPLOID h"}),el("th",{class:"num",text:"REPLOID share"})
   ])]),tb]));
 
@@ -731,7 +747,7 @@ function renderTeam(){
   track.appendChild(el("div",{class:"tick"}));
   m.appendChild(track);
   m.appendChild(el("div",{class:"legend"},[
-    el("span",{text:"Team REPLOID share "+(tot.worked?Math.round(stot.ofWorked)+"%":"—")+" of hours worked"}),
+    el("span",{text:"REPLOID share "+(tot.worked?Math.round(stot.ofWorked)+"%":"—")+" of hours worked"}),
     el("span",{text:"Excluding overhead: "+((tot.reploid+tot.external)?Math.round(stot.ofFacing)+"%":"—")})
   ]));
   return m;
@@ -754,7 +770,7 @@ window.addEventListener("message",function(ev){
 
 /* ===================== brands ===================== */
 function saveCfg(){
-  return api("config",{brands:S.cfg.brands,tasks:S.cfg.tasks})
+  return api("config",{brands:S.cfg.brands,tasks:S.cfg.tasks,teams:S.cfg.teams||[]})
     .catch(function(e){ flash("Could not save the lists — "+e.message); });
 }
 var STANDARD_BRANDS = [
@@ -827,6 +843,23 @@ function renderBrands(){
       var v=nt.value.trim(); if(!v)return;
       S.cfg.tasks.push(v); saveCfg().then(render);
     }})]));
+
+  m.appendChild(el("h2",{text:"Teams",style:"margin-top:30px"}));
+  m.appendChild(el("p",{class:"lede",text:"The teams people choose from when they sign up. Removing a team here does not move anyone: people keep the team they chose. Use Reports → Settings → People to move a person."}));
+  var tchips=el("div",{class:"quick"});
+  (S.cfg.teams||[]).forEach(function(t,i){
+    tchips.appendChild(el("button",{class:"chip",text:t+"  ×",onclick:function(){
+      S.cfg.teams.splice(i,1); S.teams=S.cfg.teams.slice(); saveCfg().then(render);
+    }}));
+  });
+  m.appendChild(tchips);
+  var ntm=el("input",{type:"text",placeholder:"New team"});
+  m.appendChild(el("div",{class:"field",style:"margin-top:12px"},[ntm,
+    el("button",{class:"btn",text:"Add",onclick:function(){
+      var v=ntm.value.trim(); if(!v)return;
+      if((S.cfg.teams||[]).indexOf(v)<0){ S.cfg.teams=(S.cfg.teams||[]).concat([v]); S.teams=S.cfg.teams.slice(); }
+      saveCfg().then(render);
+    }})]));
   return m;
 }
 
@@ -840,14 +873,19 @@ function renderExport(){
   var from=el("input",{type:"date",value:isoDate(mondayOf(shiftWeek(isoWeekOf(today),-3)))});
   var to=el("input",{type:"date",value:isoDate(today)});
   var out=el("div",{class:"status",style:"margin-top:10px"});
+  var tsel=el("select",{"aria-label":"Team"});
+  [["","All teams"]].concat((S.teams||[]).map(function(t){return [t,t];})).concat([["__none","No team yet"]]).forEach(function(o){
+    tsel.appendChild(el("option",{value:o[0],text:o[1]}));
+  });
   m.appendChild(el("div",{class:"field"},[
     el("label",{text:"From",style:"font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)"}),from,
-    el("label",{text:"To",style:"font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)"}),to
+    el("label",{text:"To",style:"font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)"}),to,
+    el("label",{text:"Team",style:"font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)"}),tsel
   ]));
   m.appendChild(el("div",{class:"field"},[
     el("button",{class:"btn",text:"Build the file",onclick:function(){
       out.className="status"; out.textContent="Collecting…";
-      buildExport(from.value,to.value,out);
+      buildExport(from.value,to.value,tsel.value,out);
     }})
   ]));
   m.appendChild(out);
@@ -865,7 +903,8 @@ var MUTED_FONT={italic:true,color:{argb:"FF6B6B6B"},name:"Arial",size:10};
 var XCOLS=[
   {header:"Date",width:12},{header:"Employee",width:26},{header:"Employee Type",width:14},
   {header:"Brand / Project",width:22},{header:"Hours",width:9},{header:"Task",width:18},
-  {header:"Notes",width:32},{header:"BMD Hours (Day)",width:16},{header:"Difference to BMD",width:16}
+  {header:"Notes",width:32},{header:"BMD Hours (Day)",width:16},{header:"Difference to BMD",width:16},
+  {header:"Team",width:18}
 ];
 function colLetter(n){var s="";while(n>0){var m=(n-1)%26;s=String.fromCharCode(65+m)+s;n=Math.floor((n-1)/26);}return s;}
 function styleHeaderRow(row){row.eachCell(function(c){c.fill=HEADER_FILL;c.font=HEADER_FONT;c.alignment={vertical:"middle"};});row.height=22;}
@@ -875,15 +914,15 @@ function weekRangeLabelDots(weekId){
   return d[0].label+mondayOf(weekId).getUTCFullYear()+" \u2013 "+d[6].label+mondayOf(weekId).getUTCFullYear();
 }
 
-function addAboutSheet(wb){
+function addAboutSheet(wb,label){
   var ws=wb.addWorksheet("About");
   ws.getColumn(1).width=22; ws.getColumn(2).width=90;
-  var title=ws.addRow(["Brand Time","Marketing hours report \u2014 Alimentastic GmbH"]);
+  var title=ws.addRow(["Brand Time",label+" hours report \u2014 Alimentastic GmbH"]);
   title.getCell(1).font=TITLE_FONT; title.getCell(2).font=BOLD_FONT;
   ws.addRow([]);
   [
-    ["Purpose","Allocation of employee hours to brands, so REPLOID-facing work can be measured against its share of the marketing retainer."],
-    ["Who","Every member of the marketing team, logged individually."],
+    ["Purpose","Allocation of employee hours to brands, so REPLOID-facing work can be measured against its share of the retainer."],
+    ["Who",label==="All teams"?"Every employee, logged individually.":"Every member of the "+label+" team, logged individually."],
     ["Granularity","One row per employee, day and brand/project."],
     ["Unassignable hours","Recorded under Team & planning, Admin & reporting, Recruiting & onboarding or Learning & development rather than a brand."],
     ["BMD reconciliation","Each employee also enters the day\u2019s total hours as logged in BMD (the \u201cBMD Hours (Day)\u201d column). The Difference column should read 0."],
@@ -897,14 +936,14 @@ function addAboutSheet(wb){
   });
 }
 
-function addWeekSheetXL(wb,weekId,flat){
+function addWeekSheetXL(wb,weekId,flat,label){
   var name=("Week "+weekId.split("-W")[1]).slice(0,31);
   var ws=wb.addWorksheet(name);
   XCOLS.forEach(function(c,i){ ws.getColumn(i+1).width=c.width; });
-  ws.mergeCells(1,1,1,9);
-  ws.getCell(1,1).value="Marketing \u2014 Week "+weekId.split("-W")[1]+" \u2014 "+weekRangeLabelDots(weekId);
+  ws.mergeCells(1,1,1,10);
+  ws.getCell(1,1).value=label+" \u2014 Week "+weekId.split("-W")[1]+" \u2014 "+weekRangeLabelDots(weekId);
   ws.getCell(1,1).font=TITLE_FONT;
-  ws.mergeCells(2,1,2,9);
+  ws.mergeCells(2,1,2,10);
   ws.getCell(2,1).value="Generated automatically by Brand Time \u2014 not a form to fill in.";
   ws.getCell(2,1).font=MUTED_FONT;
 
@@ -932,6 +971,7 @@ function addWeekSheetXL(wb,weekId,flat){
     r.getCell(6).value=f.task;
     r.getCell(7).value=f.notes;
     r.getCell(8).value=f.bmd; r.getCell(8).numFmt="0.0";
+    r.getCell(10).value=f.team;
     var diff=r1(groupSum[f.employee+"||"+f.date]-f.bmd);
     r.getCell(9).value={formula:"IF(OR(B"+rowNum+'="",H'+rowNum+'=""),"",SUMIFS($E$'+firstDataRow+":$E$"+lastDataRow+",$B$"+firstDataRow+":$B$"+lastDataRow+",B"+rowNum+",$A$"+firstDataRow+":$A$"+lastDataRow+",A"+rowNum+")-H"+rowNum+")",result:diff};
     r.getCell(9).numFmt="0.0";
@@ -1007,12 +1047,16 @@ function downloadBlob(buf,filename){
   setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 
-function buildExport(fromStr,toStr,out){
+function buildExport(fromStr,toStr,teamFilter,out){
   if(!fromStr||!toStr||fromStr>toStr){
     out.className="status err"; out.textContent="Check the dates — the end must come after the start."; return;
   }
   api("export&from="+fromStr+"&to="+toStr).then(function(j){
-    var recs=j.rows||[];
+    var recs=(j.rows||[]).filter(function(rec){
+      if(!teamFilter)return true;
+      return teamFilter==="__none"?!rec.team:rec.team===teamFilter;
+    });
+    var label=teamFilter?(teamFilter==="__none"?"No team":teamFilter):"All teams";
     var byWeek={};
     var totalLines=0;
     recs.forEach(function(rec){
@@ -1024,7 +1068,7 @@ function buildExport(fromStr,toStr,out){
           var b=brandById(r.b);
           (byWeek[rec.week]=byWeek[rec.week]||[]).push({
             date:k,employee:rec.email||"(unknown)",type:"Internal",brand:b.name,
-            hours:+r.h||0,task:r.t||"",notes:r.n||"",bmd:worked
+            hours:+r.h||0,task:r.t||"",notes:r.n||"",bmd:worked,team:rec.team||"(no team)"
           });
           totalLines++;
         });
@@ -1035,12 +1079,12 @@ function buildExport(fromStr,toStr,out){
 
     var wb=new ExcelJS.Workbook();
     wb.creator="Brand Time"; wb.created=new Date();
-    addAboutSheet(wb);
-    var weekMeta=weekIds.map(function(w){ return addWeekSheetXL(wb,w,byWeek[w]); });
+    addAboutSheet(wb,label);
+    var weekMeta=weekIds.map(function(w){ return addWeekSheetXL(wb,w,byWeek[w],label); });
     addEvaluationSheetXL(wb,weekMeta);
 
     wb.xlsx.writeBuffer().then(function(buf){
-      downloadBlob(buf,"brand-time_"+fromStr+"_"+toStr+".xlsx");
+      downloadBlob(buf,"brand-time_"+(teamFilter?label.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"")+"_":"")+fromStr+"_"+toStr+".xlsx");
       out.className="status saved"; out.textContent="File downloaded — "+totalLines+" lines across "+weekIds.length+" week(s).";
     }).catch(function(e){
       out.className="status err"; out.textContent="Export failed — "+e.message;
@@ -1058,22 +1102,37 @@ function renderLogin(){
   var box=el("div",{class:"login"});
   box.appendChild(el("h1",{text:signup?"Create your login":"Sign in"}));
   box.appendChild(el("p",{class:"lede",text:signup
-    ? "Use your work email address. Only addresses on the marketing team list are accepted."
-    : "Weekly brand time for the marketing team."}));
+    ? "Use your work email address and choose your team. Only addresses on the team list are accepted."
+    : "Weekly brand time."}));
 
   var email=el("input",{type:"email",autocomplete:"username",placeholder:"you@company.com"});
   var pw=el("input",{type:"password",
     autocomplete:signup?"new-password":"current-password",placeholder:"••••••••"});
   var msg=el("div",{class:"msg"});
   var btn=el("button",{class:"btn",text:signup?"Create login":"Sign in"});
+  var teamSel=null;
+  if(signup){
+    teamSel=el("select",{"aria-label":"Your team"});
+    var fillTeams=function(list){
+      clear(teamSel);
+      teamSel.appendChild(el("option",{value:"",text:"Choose your team…"}));
+      (list||[]).forEach(function(t){ teamSel.appendChild(el("option",{value:t,text:t})); });
+    };
+    fillTeams(S.teamOptions||[]);
+    if(!S.teamOptions){
+      auth("teams").then(function(j){ S.teamOptions=j.teams||[]; fillTeams(S.teamOptions); })
+        .catch(function(){ msg.className="msg err"; msg.textContent="Could not load the team list. Please reload the page."; });
+    }
+  }
 
   function go(){
     var e=email.value.trim().toLowerCase(), p=pw.value;
     if(!e||!p){ msg.className="msg err"; msg.textContent="Email and password, please."; return; }
     if(signup&&p.length<8){ msg.className="msg err";
       msg.textContent="Use at least 8 characters."; return; }
+    if(signup&&!teamSel.value){ msg.className="msg err"; msg.textContent="Please choose your team."; return; }
     btn.disabled=true; msg.className="msg"; msg.textContent="…";
-    auth(signup?"signup":"login",{email:e,password:p}).then(function(){
+    auth(signup?"signup":"login",signup?{email:e,password:p,team:teamSel.value}:{email:e,password:p}).then(function(){
       if(signup){
         msg.className="msg ok"; msg.textContent="Account created. Signing you in…";
         return auth("login",{email:e,password:p});
@@ -1090,11 +1149,35 @@ function renderLogin(){
 
   box.appendChild(el("label",{text:"Work email"})); box.appendChild(email);
   box.appendChild(el("label",{text:"Password"}));   box.appendChild(pw);
+  if(signup){ box.appendChild(el("label",{text:"Team"})); box.appendChild(teamSel); }
   box.appendChild(btn);
   box.appendChild(msg);
   box.appendChild(el("button",{class:"swap",
     text:signup?"I already have a login":"First time here? Create a login",
     onclick:function(){ S.authMode=signup?"login":"signup"; renderLogin(); }}));
+  main.appendChild(box);
+}
+
+/* ===================== team picker ===================== */
+/* Shown once to anyone whose team is not known yet. After this only an admin can change it. */
+function renderTeamPick(){
+  document.getElementById("tabs").style.display="none";
+  var main=document.getElementById("main"); clear(main);
+  var box=el("div",{class:"login"});
+  box.appendChild(el("h1",{text:"Which team are you in?"}));
+  box.appendChild(el("p",{class:"lede",text:"Choose your team once. If you pick the wrong one later, ask an admin to change it."}));
+  var sel=el("select",{"aria-label":"Your team"});
+  sel.appendChild(el("option",{value:"",text:"Choose your team…"}));
+  (S.teams||[]).forEach(function(t){ sel.appendChild(el("option",{value:t,text:t})); });
+  var msg=el("div",{class:"msg"});
+  var btn=el("button",{class:"btn",text:"Continue"});
+  btn.addEventListener("click",function(){
+    if(!sel.value){ msg.className="msg err"; msg.textContent="Please choose your team."; return; }
+    btn.disabled=true; msg.className="msg"; msg.textContent="…";
+    api("profile",{team:sel.value}).then(function(){ location.reload(); })
+      .catch(function(e){ btn.disabled=false; msg.className="msg err"; msg.textContent=e.message||"Could not save your team."; });
+  });
+  box.appendChild(el("label",{text:"Team"})); box.appendChild(sel); box.appendChild(btn); box.appendChild(msg);
   main.appendChild(box);
 }
 
@@ -1104,7 +1187,7 @@ function renderTabs(){
   tabs.style.display="";
   clear(tabs);
   var list=[["week","My week"]];
-  if(S.admin)list.push(["team","Team"],["reports","Reports"],["brands","Brands"],["export","Export"]);
+  if(S.admin)list.push(["team","Teams"],["reports","Reports"],["brands","Brands"],["export","Export"]);
   list.forEach(function(t){
     tabs.appendChild(el("button",{text:t[1],"aria-current":S.view===t[0]?"true":"false",
       onclick:function(){
@@ -1119,6 +1202,7 @@ function renderTabs(){
 function render(){
   if(!S.ready)return;
   if(!S.authed)return renderLogin();
+  if(S.needsTeam)return renderTeamPick();
   renderTabs();
   var wrapEl=document.querySelector(".wrap"); if(wrapEl)wrapEl.classList.toggle("wide",S.view==="reports");
   var main=document.getElementById("main"); clear(main);
@@ -1131,7 +1215,7 @@ function render(){
 function renderWho(){
   var who=document.getElementById("who"); clear(who);
   if(!S.authed)return;
-  who.appendChild(document.createTextNode(((S.me&&S.me.email)||"")+(S.admin?" · admin":"")));
+  who.appendChild(document.createTextNode(((S.me&&S.me.email)||"")+(S.me&&S.me.team?" · "+S.me.team:"")+(S.admin?" · admin":"")));
   who.appendChild(el("button",{class:"out",text:"Sign out",onclick:function(){
     auth("logout",{}).catch(function(){}).then(function(){ location.reload(); });
   }}));
@@ -1143,10 +1227,13 @@ api("bootstrap").then(function(j){
   S.cfg=j.config||{brands:[],tasks:[]};
   if(!S.cfg.brands)S.cfg.brands=[];
   if(!S.cfg.tasks)S.cfg.tasks=[];
+  S.teams=j.teams||[]; S.cfg.teams=S.teams.slice();
+  S.needsTeam=!!j.needsTeam;
   S.doc.dailyDefault=(j.profile&&j.profile.dailyDefault)||8;
   S.authed=true; S.ready=true;
   S.week=isoWeekOf(new Date());
   renderWho();
+  if(S.needsTeam){ render(); return; }
   if(!S.cfg.brands.length&&!S.admin){
     var main=document.getElementById("main"); clear(main);
     main.appendChild(el("div",{class:"empty",

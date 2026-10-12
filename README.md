@@ -1,8 +1,8 @@
 # Brand Time
 
-Weekly brand time allocation for the marketing team. Each person logs hours worked
-per day and splits them across brands; the tool reports the REPLOID share against
-an 80% target and exports to Excel.
+Weekly brand time allocation for every team. Each person logs hours worked per day
+and splits them across brands; the tool reports the REPLOID share against an 80%
+target and exports to Excel.
 
 Entries are private: a person can only ever read and write their own weeks.
 Only admins see the team view, the roster, the brand list and the export — and
@@ -96,23 +96,52 @@ Go to **Brands** before you tell anyone else about it. See the notes below.
 
 ---
 
+## Teams
+
+Everyone belongs to one team (Marketing, Sales FMCG, Sales PETFOOD, Operations,
+Product Development, Management to start with). The team is how hours are grouped
+in reports, how weeks close, and which email a week goes out in.
+
+- **At signup** people choose their team from a dropdown. It is stored on the
+  server in their Brand Time profile (not in Identity metadata, which users can
+  edit themselves).
+- **Accounts that pre-date teams** are asked once, at their next login, before they
+  can do anything else.
+- **People can't change it afterwards.** An admin changes it under
+  **Reports -> Settings -> People -> Team**. That also works for people who have not
+  signed up yet, so you can place someone before their first login. An admin's
+  choice always wins over the person's own.
+- **The list of teams** is edited by admins on the **Brands** tab (Teams). Removing
+  a team does not move anyone.
+- A team is self-declared at signup, and only people on the allowed-email list can
+  sign up. If someone picks the wrong team, fix it under People.
+
+---
+
 ## Closing a week and the completion email
 
-A week **closes** the moment every address in `ALLOWED_EMAILS` has submitted it.
-From then on nobody can change or reopen it — saves are refused, the week shows
-as read-only with a "closed" banner, and the Submit button disappears. Until the
-last person submits, anyone can still reopen and correct their own week.
+A team's week **closes** the moment every roster address in that team has submitted
+it. "Roster" is still `ALLOWED_EMAILS`; each address belongs to the team that person
+chose (or that an admin assigned). From then on nobody in the team can change or
+reopen that week — saves are refused, the week shows as read-only with a "closed"
+banner, and the Submit button disappears. Until the last person in the team submits,
+anyone can still reopen and correct their own week. **Other teams are not affected**:
+each team closes on its own.
 
-At the moment of closing, the app builds the week's Excel file and emails it to
-`NOTIFY_EMAIL`. **One email per week, ever.** The close is an atomic
-write-only-if-new in Netlify Blobs, so even if the last two people submit in the
-same second, exactly one of them closes the week and sends the email. The store
-is also read with strong consistency, so a recent change is never read stale.
+At the moment of closing, the app builds that team's Excel file and emails it to
+`NOTIFY_EMAIL`. **One email per team per week, ever.** The close is an atomic
+write-only-if-new in Netlify Blobs, so even if the last two people in a team submit
+in the same second, exactly one of them closes the week and sends the email. The
+store is also read with strong consistency, so a recent change is never read stale.
+The subject and attachment name carry the team, e.g. "Brand Time — Operations —
+week 2026-W41 complete (7/7)".
 
-"Everyone" means everyone in `ALLOWED_EMAILS` — not everyone who has ever opened
-the tool. An address listed twice counts once. **A week cannot close until every
-listed person has submitted**, so remove anyone who has left from
-`ALLOWED_EMAILS` (and redeploy), or their week will hold it open.
+An address listed twice in `ALLOWED_EMAILS` counts once. **A team's week cannot close
+until every listed person in that team has submitted**, so remove anyone who has left
+from `ALLOWED_EMAILS` (and redeploy), or their week will hold their team open.
+A listed person who has **no team yet** (never signed up, and not placed by an
+admin) does not hold any team open — but they are shown under "No team" in the
+Reports review so nobody is missed.
 
 If Resend rejects the send (bad key, sandbox restriction, etc.) the week is
 **not** closed: the claim is released, the submission is kept, and the next save
@@ -120,12 +149,13 @@ of a submitted week tries again. The error shows up in the function logs
 (**Logs -> Functions -> api** in the Netlify dashboard), not to the person
 submitting — check there first if an expected email doesn't arrive.
 
-Weeks that were already emailed under the previous version count as closed.
+Weeks that were closed or emailed before teams existed count as closed for
+everyone.
 
 There is currently **no way to reopen a closed week** — by design, a closed week
 is final. If that ever becomes a real need, it should be built as an explicit
 admin "reopen" action rather than done by hand in the Blobs browser: removing the
-`closed/<week>` entry alone would not work, because everyone is still marked
+`closed/<week>/<team>` entry alone would not work, because everyone is still marked
 submitted and the very next save would close the week again and send another
 email.
 
@@ -160,8 +190,9 @@ What the report counts, and how it differs from Excel uploads:
 - **Only submitted weeks count** by default, so the numbers are finished ones. Hours
   in weeks that are not submitted yet are shown as "Not yet counted"; switch on
   "Include weeks not yet submitted" in Settings to count them too.
-- **One department.** Brand Time covers Marketing only, so "By department" has a
-  single column. The structure is there for when other departments are added.
+- **Departments are teams.** "By department", the review grid and the hourly rates
+  use each person's team (an admin's choice in Settings -> People wins). People
+  with no team yet appear under "No team".
 - **Groups are the report's own.** A brand's group in the report (Reploid / Diverse /
   Do not report) is set in Reports -> Settings and is separate from the group on the
   Brands tab. The defaults are those of the original report: REPLOID, Beak Bandits,
@@ -186,6 +217,15 @@ from the same site only (`X-Frame-Options: SAMEORIGIN`).
 ---
 
 ## Things to check before rollout
+
+**The brand and task lists are shared by every team.** There is one dropdown for
+everyone. It currently holds the Marketing brands (12 brands plus a few internal and
+external categories) and Marketing's task types, so other teams will not find their
+own brands there until an admin adds them on the **Brands** tab. The company
+timesheet template ("Markenliste") lists about 45 brands with a group for each;
+adding the ones other teams need, and the absence entries (vacation, sick leave,
+time off in lieu, public holiday) if you want them, is the next thing to decide
+before rolling out beyond Marketing.
 
 **Already deployed and the brand list is wrong?** The Brands tab has a
 "Load standard list (13 brands)" button — click it and it replaces

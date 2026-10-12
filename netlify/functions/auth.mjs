@@ -1,4 +1,6 @@
 import { login, signup, logout, getUser, verifyRequestOrigin } from '@netlify/identity';
+import { getStore } from '@netlify/blobs';
+import { DEFAULT_TEAMS } from './seed.mjs';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -7,13 +9,25 @@ function json(body, status = 200) {
   });
 }
 
+async function teamList() {
+  try {
+    const cfg = await getStore({ name: 'brandtime', consistency: 'strong' }).get('config', { type: 'json' });
+    if (cfg && Array.isArray(cfg.teams) && cfg.teams.length) return cfg.teams;
+  } catch { /* fall through to the defaults */ }
+  return DEFAULT_TEAMS;
+}
+
 export default async (req) => {
   const op = new URL(req.url).searchParams.get('op');
 
-  // Read-only check, no CSRF guard needed.
+  // Read-only checks, no CSRF guard needed.
   if (op === 'me') {
     const u = await getUser();
     return json({ user: u ? { id: u.id, email: u.email } : null });
+  }
+  // The signup form needs the team list before anyone is signed in. Team names are not sensitive.
+  if (op === 'teams') {
+    return json({ teams: await teamList() });
   }
 
   try {
@@ -38,7 +52,18 @@ export default async (req) => {
     if (op === 'signup') {
       if (!email || !password) return json({ error: 'Email and password required.' }, 400);
       if (password.length < 8) return json({ error: 'Password must be at least 8 characters.' }, 400);
-      await signup(email, password, {});
+      const teams = await teamList();
+      const team = String(body.team || '');
+      if (!teams.includes(team)) return json({ error: 'Please choose your team.' }, 400);
+      const created = await signup(email, password, {});
+      // The team is kept in Brand Time's own profile record, not in Identity metadata (users can edit
+      // their own metadata). If this write fails the person is simply asked for their team at first login.
+      try {
+        if (created && created.id) {
+          const store = getStore({ name: 'brandtime', consistency: 'strong' });
+          await store.setJSON(`profile/${created.id}`, { email, team, dailyDefault: 8, seenAt: new Date().toISOString() });
+        }
+      } catch (e) { console.error('brand-time: could not store team at signup:', e && e.message); }
       return json({ ok: true });
     }
     if (op === 'logout') {
@@ -50,7 +75,7 @@ export default async (req) => {
     const msg = String((e && e.message) || e);
     // Identity denies non-allowlisted signups via the userValidate handler.
     if (/401|unauthor|denied|deny/i.test(msg)) {
-      return json({ error: 'That address is not on the marketing team list, or the password is wrong.' }, 401);
+      return json({ error: 'That address is not on the team list, or the password is wrong.' }, 401);
     }
     if (/invalid|credential|password|not\s*found/i.test(msg)) {
       return json({ error: 'That email and password do not match.' }, 401);
