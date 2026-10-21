@@ -39,6 +39,11 @@ CLI: `npm install`, then `netlify deploy --prod`.
 
 ### 2. Enable Identity
 
+Identity is switched on **per Netlify project**. A new project (for example a copy of this
+site under a new URL) starts with it off, and signing up then fails with
+"Signup failed (404)" or the message "Netlify Identity is not enabled for this project".
+Environment variables do not carry this setting over, so repeat this step on every new site.
+
 **Project configuration → Identity → Enable Identity.**
 
 Then under **Registration**:
@@ -57,7 +62,7 @@ Then under **Registration**:
 | Variable | Value |
 |---|---|
 | `ALLOWED_EMAILS` | every team address that may create a login, comma-separated — this is also the roster the completion email checks against |
-| `ADMIN_EMAILS` | your address (and anyone else who should see everyone's data) |
+| `ADMIN_EMAILS` | the admins: they see everyone's data, and they may always create a login even if they are not on `ALLOWED_EMAILS`, so an admin who does not log hours never holds a team's week open |
 | `RESEND_API_KEY` | from resend.com — see below |
 | `NOTIFY_EMAIL` | who receives the completion email — one address or several, comma-separated, e.g. `m.tramonte@alimentastic.com,other@alimentastic.com`. Recipients do not need to be in `ALLOWED_EMAILS` and do not need a login. If unset, it falls back to the first address in `ADMIN_EMAILS`. Until a sending domain is verified in Resend, only the address you signed up to Resend with can receive mail — see step 4 |
 | `RESEND_FROM` | optional, see below |
@@ -115,6 +120,24 @@ in reports, how weeks close, and which email a week goes out in.
   a team does not move anyone.
 - A team is self-declared at signup, and only people on the allowed-email list can
   sign up. If someone picks the wrong team, fix it under People.
+
+---
+
+## Entering time
+
+Hours worked and the time on each brand are entered **to the minute, as h:mm**
+(for example `7:30` or `0:45`). These also work: `7.5` or `7,5` (decimal hours),
+`8` (hours), `1h30`, `1h 30m`, `45m`. When someone leaves the field it is shown as
+h:mm, and an entry that is not a time goes back to the last good value with a hint.
+The + and - buttons move hours worked in 15-minute steps, and a new row is
+pre-filled with exactly the time still unassigned.
+
+Behind the scenes times are stored as decimal hours (7:20 is 7.333333), but always a
+whole number of minutes: the screen does its sums in whole minutes, and the server
+rounds whatever it receives to the nearest minute (and to 0-24 h). Existing entries
+(for example 1.25 h) simply show as 1:15. The admin gauge and the Teams tab show
+h:mm; **Reports and the Excel files use decimal hours** (7:20 appears as 7.33), with
+two decimals so no minute is lost.
 
 ---
 
@@ -179,7 +202,9 @@ layout as the standalone "Stundenreport" it was modelled on, in English:
   marked "all good".
 - **Data** — every entry, searchable.
 - **Settings** — how "General" hours are allocated, which brands count as Reploid,
-  start week, hourly rates, and the people list (start / leaving dates).
+  start week (from when missing submissions are flagged; earlier weeks that have
+  data stay selectable and still count), hourly rates, and the people list
+  (start / leaving dates).
 - **More** menu — Excel exports (report, investor report, one brand, all brands).
 
 Period selector: Week, Month or All. Reports read the live data each time the tab

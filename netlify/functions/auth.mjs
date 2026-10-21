@@ -73,6 +73,12 @@ export default async (req) => {
     return json({ error: 'Unknown operation.' }, 400);
   } catch (e) {
     const msg = String((e && e.message) || e);
+    // A bare 404 from Identity itself means Identity is not switched on for this Netlify project
+    // (its settings belong to each project and do not copy over with the environment variables).
+    if (e && e.status === 404) {
+      console.error('brand-time: Identity answered 404 - is Identity enabled for this project?');
+      return json({ error: 'Sign-in is not set up on this site yet: Netlify Identity is not enabled for this project. An admin needs to enable it in the Netlify dashboard (Identity), allow signups without email confirmation, and redeploy.' }, 503);
+    }
     // Identity denies non-allowlisted signups via the userValidate handler.
     if (/401|unauthor|denied|deny/i.test(msg)) {
       return json({ error: 'That address is not on the team list, or the password is wrong.' }, 401);

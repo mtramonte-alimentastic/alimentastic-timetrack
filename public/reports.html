@@ -525,7 +525,11 @@ function rebuild() {
   // weeks shown in selectors and status grids
   const all = S.weeksRaw.map(w => w.week).concat(ROWS.map(r => r.week)).sort();
   const nowWk = weekOf(new Date());
-  const first = S.settings.startWeek && S.settings.startWeek <= nowWk ? S.settings.startWeek : (all[0] || nowWk);
+  // Every week that has data stays selectable. "Track from week" (Settings) only decides from when missing
+  // submissions are flagged in the status grid; it must never hide data that exists.
+  const dataFirst = all[0] || nowWk;
+  const startSetting = S.settings.startWeek && S.settings.startWeek <= nowWk ? S.settings.startWeek : null;
+  const first = startSetting && startSetting < dataFirst ? startSetting : dataFirst;
   const last = [nowWk, all[all.length - 1] || nowWk].sort().pop();
   WEEKS = weekRange(first <= last ? first : last, last);
 }
@@ -1147,7 +1151,7 @@ function viewSettings() {
       ${m('fixed', 'Fixed key', 'Enter percentages per brand in the table below. They do not have to add up to 100, only the ratio counts.')}</div>
     </div>
     <div class="section"><h2>What counts, and cost</h2>
-      <div class="field"><label for="startWeek"><b>Track from week</b></label><span class="inline"><select id="startWeek">${weekOpts}</select></span><small>Earlier weeks are not shown as "missing".</small></div>
+      <div class="field"><label for="startWeek"><b>Track from week</b></label><span class="inline"><select id="startWeek">${weekOpts}</select></span><small>Earlier weeks are not flagged as "missing". Their hours still count and can still be selected.</small></div>
       <div class="field"><label class="inline"><input type="checkbox" id="includeDrafts" ${st.includeDrafts ? 'checked' : ''}> Include weeks that are not submitted yet</label><small>Off: only submitted weeks count, so the reports show finished numbers.</small></div>
       <div class="field"><b>Internal hourly rates per department</b><small>Optional. If filled in, all reports also show cost.</small>
       ${deptsAll().map(d => `<span class="inline"><input type="number" class="short" min="0" step="1" data-rate="${esc(d)}" value="${st.rates[d] > 0 ? st.rates[d] : ''}" placeholder="–" aria-label="Hourly rate ${esc(d)}"> €/h · ${esc(d)}</span>`).join('')}</div>
