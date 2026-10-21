@@ -643,10 +643,25 @@ function shownWeeks(list) {
   for (const w of WEEKS.filter(x => x >= startWk())) { out.push(w); if (list.every(e => ['open', 'inactive'].includes(empStatus(e, w).s))) break; }
   return out;
 }
-function lastDueWeek() {
+function lastDueWeek(weeks = WEEKS) {
   const today = new Date(); today.setHours(23, 59, 59, 0);
-  for (let i = WEEKS.length - 1; i >= 0; i--) if (deadline(WEEKS[i]) <= today) return WEEKS[i];
+  for (let i = weeks.length - 1; i >= 0; i--) if (deadline(weeks[i]) <= today) return weeks[i];
   return null;
+}
+/* The Review tab follows the Week / Month / All filter at the top. "All" shows every tracked week. */
+const weekTouchesMonth = (w, m) => { const s = mondayOf(w), e = new Date(s.getTime() + 6 * DAY); return s.toISOString().slice(0, 7) <= m && e.toISOString().slice(0, 7) >= m; };
+function periodWeekList() { // the weeks inside the selected period, or null for "All"
+  if (S.mode === 'week') return [S.period];
+  if (S.mode === 'month') return WEEKS.filter(w => weekTouchesMonth(w, S.period));
+  return null;
+}
+const reviewWeeks = list => periodWeekList() || shownWeeks(list);
+const inReview = week => { const pw = periodWeekList(); return !pw || pw.includes(week); };
+function reviewScope() {
+  if (S.mode === 'week') return weekLabel(S.period);
+  const pw = periodWeekList();
+  if (S.mode === 'month') return pw.length ? `${monthLabel(S.period)} · weeks ${kwOf(pw[0])}–${kwOf(pw[pw.length - 1])}` : monthLabel(S.period);
+  return `All tracked weeks, from week ${kwOf(startWk())}`;
 }
 const REPORT_URL = () => location.origin;
 const firstName = e => { const t = String(e.name || '').split(/\s+/)[0]; return t.length > 2 ? t : ''; };
@@ -750,7 +765,7 @@ const SEV = {crit: 'Error', warn: 'Check', info: 'Note'};
 const pill = (sev, text) => `<span class="pill ${sev}">${ICON[sev] || ''}${esc(text || SEV[sev])}</span>`;
 
 function renderFiles() {
-  const all = peopleList(); const due = lastDueWeek();
+  const all = peopleList(); const due = lastDueWeek(periodWeekList() || WEEKS);
   const cards = deptsAll().map(dept => {
     const members = all.filter(e => e.dept === dept);
     const emails = new Set(members.map(e => e.email.toLowerCase()));
@@ -795,10 +810,10 @@ function renderPeriodBar() {
     : `${rows.length} entries in the period.`;
 }
 function renderTabs() {
-  const all = findIssues();
+  const all = findIssues().filter(i => inReview(i.week));
   ISSUES = all.filter(i => !S.acks[issueKey(i)]); ISSUES_ACKED = all.filter(i => S.acks[issueKey(i)]);
   const crit = ISSUES.filter(i => i.sev === 'crit').length, warn = ISSUES.filter(i => i.sev === 'warn').length;
-  const late = empMissing(peopleList(), WEEKS).reduce((n, x) => n + x.kws.length, 0);
+  const late = empMissing(peopleList(), reviewWeeks(peopleList())).reduce((n, x) => n + x.kws.length, 0);
   const badge = crit + late ? `<span class="count crit">${crit + late}</span>` : warn ? `<span class="count">${warn}</span>` : '';
   const tabs = [['overview', 'Overview'], ['investor', 'Investor report'], ['brand', 'By brand'], ['review', 'Review', badge], ['data', 'Data'], ['settings', 'Settings']];
   document.getElementById('tabs').innerHTML = tabs.map(([k, l, b]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${S.tab === k}">${l}${b || ''}</button>`).join('');
@@ -905,7 +920,7 @@ function viewOverview() {
   if (S.settings.method === 'none' || gA.total) k.push(kpi('General (no brand)', fmtNum(gA.total), `${gT ? fmtPct(gA.total / gT) : '–'} · organisation, meetings etc.`));
   if (rates) k.push(kpi('Cost', fmtEur(sum(res.list.map(x => costOf(x.byDept)))), 'at internal hourly rates'));
   // Point to open items instead of spreading the review across this page
-  const openW = empMissing(peopleList(), WEEKS).reduce((n, x) => n + x.kws.length, 0);
+  const openW = empMissing(peopleList(), reviewWeeks(peopleList())).reduce((n, x) => n + x.kws.length, 0);
   const crit = ISSUES.filter(i => i.sev === 'crit').length;
   const attention = (openW || crit) ? `<button class="banner" data-tab="review" style="border:0;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit"><span>${openW ? `<b>${openW} weekly ${openW > 1 ? 'submissions are' : 'submission is'} missing</b>` : ''}${openW && crit ? ' · ' : ''}${crit ? `<b>${crit} ${crit > 1 ? 'errors' : 'error'} in the data</b>` : ''}</span><span class="muted">Go to Review →</span></button>` : '';
   const unc = uncountedHours();
@@ -1068,7 +1083,7 @@ function empGrid(list, weeks, only) {
       if (st.s === 'ok' && st.h < 0.5) return `<td><span class="cell exc" data-tip="${esc(`${e.name}, week ${kwOf(w)}: excused\nSubmitted with no hours (leave or similar)`)}">excused</span></td>`;
       if (st.s === 'ok') return `<td><span class="cell ${st.late ? 'lateok' : 'ok'}" data-tip="${esc(`${e.name}, week ${kwOf(w)}: ${fmtH(st.h)} submitted${st.at ? `\n${fmtTime(st.at)}` : ''}${st.late ? '\nsubmitted after the deadline' : ''}`)}">${fmtNum(st.h, 0)} h</span></td>`;
       if (st.s === 'exc') return `<td><button class="cell exc" data-action="exc-clear" data-e="${esc(e.id)}" data-w="${w}" data-tip="${esc(`${e.name}, week ${kwOf(w)}: excused (${st.x.reason})${st.x.note ? '\n' + st.x.note : ''}\nClick to reset`)}">excused</button></td>`;
-      if (st.s === 'inactive') return `<td><span class="cell inactive" data-tip="${esc(`${e.name}: not employed in week ${kwOf(w)}`)}">·</span></td>`;
+      if (st.s === 'inactive') return `<td><span class="cell inactive" data-tip="${esc(w < startWk() ? `Before the tracking start (week ${kwOf(startWk())}), so not flagged as missing. Change it under Settings → Track from week.` : `${e.name}: not employed in week ${kwOf(w)}`)}">·</span></td>`;
       if (st.s === 'late') return menu(e, w, 'late', 'missing', `${e.name}, week ${kwOf(w)}: not submitted${st.draft ? `\n${fmtH(st.h)} entered but the week was not submitted` : ''}\nClick to mark`);
       if (st.s === 'due') return menu(e, w, 'due', 'today', `${e.name}, week ${kwOf(w)}: due today\nClick to mark, e.g. for leave`);
       return `<td><span class="cell open">–</span></td>`;
@@ -1089,11 +1104,13 @@ function excEditor(list) {
     <p class="note">Weeks with a reason no longer count as "not submitted". For several weeks of leave, set "to" to the last week.</p></div>`;
 }
 function viewCheck() {
-  const list = peopleList(); const weeks = shownWeeks(list);
+  const list = peopleList(); const weeks = reviewWeeks(list);
   const em = empMissing(list, weeks);
   const missCount = em.reduce((n, x) => n + x.kws.length, 0);
   const empTable = em.length ? `<div class="tbl-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Missing</th><th class="r">Mark as done</th></tr></thead><tbody>${em.flatMap(x => x.kws.map(w => `<tr><td><b>${esc(x.e.name)}</b></td><td>${esc(x.e.dept)}</td><td class="num">Week ${kwOf(w)}</td><td class="r"><span class="inline" style="justify-content:flex-end"><button class="btn small" data-action="exc-set" data-e="${esc(x.e.id)}" data-w="${w}" data-r="Vacation">Vacation</button><button class="btn small" data-action="exc-set" data-e="${esc(x.e.id)}" data-w="${w}" data-r="No reason given">No reason</button><button class="btn small" data-action="exc-edit" data-e="${esc(x.e.id)}" data-w="${w}">Reason …</button></span></td></tr>`)).join('')}</tbody></table></div>` : '';
   const missingBlock = `<div class="section"><div class="section-head"><h2>Submission status per employee</h2><span class="inline"><label class="inline" style="font-size:.88rem"><input type="checkbox" id="onlyMissing" ${S.onlyMissing ? 'checked' : ''}> Open only</label>${em.length ? remindAllLink(em) : ''}${em.length ? '<button class="btn small" data-action="copy-reminder">Copy list</button>' : ''}</span></div>
+    <p class="note"><b>Showing:</b> ${esc(reviewScope())}. Change it with the Week / Month / All filter above.</p>
+    ${weeks.some(w => w < startWk()) ? `<p class="note">Weeks before week ${kwOf(startWk())} are not flagged as "missing" (Settings → Track from week); people who did submit them are still shown. <button class="lnk" data-tab="settings">Settings</button></p>` : ''}
     <div class="summary">${missCount ? pill('crit', `${missCount} ${missCount > 1 ? 'weeks are' : 'week is'} missing for ${em.length} ${em.length > 1 ? 'people' : 'person'}`) : pill('ok', 'All due weeks submitted or marked')}</div>
     <p class="note">Click "missing" to excuse the week as vacation or without a reason (n/a). Excused weeks can be reset with a click. "Remind" next to a name opens a ready-made email in Outlook; it is only sent there. Weeks are due on the Monday after the week, end of day.</p>
     ${excEditor(list)}
@@ -1111,7 +1128,7 @@ function viewCheck() {
   const list2 = (ISSUES.length ? `<div class="tbl-wrap"><table>${head}<tbody>${ISSUES.map(i => row(i, false)).join('')}</tbody></table></div>` : `<div class="empty">No open findings.</div>`)
     + (ISSUES_ACKED.length ? `<div><button class="btn small" data-action="toggle-acked">${S.showAcked ? 'Hide done' : `Show ${ISSUES_ACKED.length} marked as “all good”`}</button></div>${S.showAcked ? `<div class="tbl-wrap"><table>${head}<tbody>${ISSUES_ACKED.map(i => row(i, true)).join('')}</tbody></table></div>` : ''}` : '');
   return `${missingBlock}
-  <div class="section"><div class="section-head"><h2>Findings in the data</h2><button class="btn small" data-action="copy-issues">Copy list for email</button></div>${issueLine}<p class="note">Clarify errors with the person concerned first. Rows with errors in brand or hours are not counted, all others are.</p>${list2}</div>`;
+  <div class="section"><div class="section-head"><h2>Findings in the data</h2><button class="btn small" data-action="copy-issues">Copy list for email</button></div>${issueLine}<p class="note">Findings for the selected period (${esc(reviewScope())}). Clarify errors with the person concerned first. Rows with errors in brand or hours are not counted, all others are.</p>${list2}</div>`;
 }
 
 /* ---------- settings ---------- */
@@ -1320,7 +1337,7 @@ document.addEventListener('click', e => {
   else if (a === 'toggle-group') { S.open[t.dataset.g] = !S.open[t.dataset.g]; render(); }
   else if (a === 'reload') { loadData().then(() => { render(); toast('Data refreshed'); }).catch(err => toast(err.message)); }
   else if (a === 'copy-reminder') {
-    const em = empMissing(peopleList(), shownWeeks(peopleList()));
+    const em = empMissing(peopleList(), reviewWeeks(peopleList()));
     copyText('Hi,\n\nthe following weekly submissions are still missing in Brand Time:\n' + em.map(x => `- ${x.e.name}: week ${x.kws.map(kwOf).join(', week ')}`).join('\n') + '\n\nPlease enter the hours and submit the week. If you were on leave or off sick, just let me know. Thanks!');
   }
   else if (a === 'cell-menu') { const k = t.dataset.e + '|' + t.dataset.w; S.cellMenu = S.cellMenu === k ? null : k; render(); }

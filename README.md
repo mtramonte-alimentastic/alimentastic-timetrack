@@ -196,7 +196,9 @@ layout as the standalone "Stundenreport" it was modelled on, in English:
   General split, a per-month table, focus areas per brand.
 - **By brand** — one brand at a time: text, KPIs, activities, hours by week.
   Employee names are hidden by default, and notes are never shown here.
-- **Review** — who has not submitted which week (with one-click "Remind" emails
+- **Review** — follows the Week / Month / All filter like every other tab: the grid, the
+  findings, the tab badge and the Overview banner all cover the selected period ("All"
+  shows every tracked week). Shows who has not submitted which week (with one-click "Remind" emails
   that open in Outlook), and findings in the data: BMD differences, brands named in
   notes, 0 h rows, days with hours worked but nothing assigned. Findings can be
   marked "all good".
